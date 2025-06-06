@@ -1,0 +1,26 @@
+Antes de seguir cualquier paso ha de tener instalada la biblioteca para Python de paho.mqtt y de psycopg2 tanto en su ordenador como en su instancia de RoboDK:
+•	Instalar psycopg2 https://pypi.org/project/psycopg2/
+•	Instalar paho.mqtt https://pypi.org/project/paho-mqtt/
+•	Para instalarlo en Robodk ha de buscar la ruta de python que este usa e instalarlas ahí
+Para poder iniciar nuestro proyecto y ver su correcto funcionamiento en todas sus secciones ha de seguir los siguientes pasos:
+1.	Abra el programa de RoboDK y en él la estación Autopizza_vFinal. Esta versión está preparada para su puesta a funcionar directamente.
+¡Importante! Si ha seguido los pasos, ha parado el proceso y quiere volver a poner a punto la estación de RoboDK lo más recomendable es abrir la misma versión que tenía inicialmente, pero si quiere ponerla a punto a mano debe:
+1.1.	 Asegurarse de borrar del sistema de referencia de pizzas todos los objetos visibles.
+1.2.	 Si el robot de corte tiene cogido el cuchillo, ejecutar a mano el programa “dejarcuchillo”, por el contrario, si tiene cogida la pala, ejecutar el programa “dejarpala”
+2.	En la estación, ejecute el script de Python IniProceso_Final, si esta no lo lleva incorporado, descargue el código y cargue el script en la estación.
+3.	Tras ello ya tiene la estación de RoboDK funcionando, para conectarse con la base de datos ha de tener esta corriendo en su ordenador, por ejemplo, teniéndola abierta con un programa como pgAdmin.
+4.	También ha de tener corriendo otro script de Python llamado consulta_bdd_final.py corriendo en su ordenador, por ejemplo, ejecutándolo en la terminal.
+5.	Para poder realizar un pedido de pizza y así verlo reflejado en el proyecto ha de pedirlo por la página web https://autopizza-web.onrender.com/:
+5.1.	Acceda el desplegable de “Menú” situado en la parte de arriba a la derecha de la página.
+5.2.	Elija la opción de “Carta”.
+5.3.	Escoja la pizza a pedir clicando el botón de “Pedir Pizza”.
+5.4.	Tras ello le pedirá iniciar sesión, escoja un nombre de usuario sin caracteres extraños como espacios, dólar $ o relativos.
+5.5.	Introduzca de contraseña “autopizza2025”.
+5.6.	Vuelva a clicar en “Pedir Pizza”.
+5.7.	Si su contraseña era correcta le saltará un código QR en pantalla, guárdelo.
+Si no cargara la página web, ha de conectarse por mqtt a “wss://broker.emqx.io/mqtt” y mandar por el topic “UPV/PR2/2-08/recibir/usuario/robodk” un mensaje con este formato “usuario:contraseña” con contraseña “autopizza2025” y por el topic “UPV/PR2/2-08/recibir/pizza/robodk” un mensaje con una de estas cuatro opciones referidas a pizza de bacon, de pepperoni, de champiñones y de queso:
+•	Pizza_Ricardo
+•	Pizza_Ruben
+•	Pizza_Jordi
+•	Pizza_David
+6.	Su pedido está en cola y se verá reflejado cuando salga una nueva pizza, finalmente para hacer desaparecer la pizza debería de pasar su QR por la cámara instalada en nuestra placa, al no poder realizar esa operación en situaciones normales, su pizza desaparece tras 20 segundos.
