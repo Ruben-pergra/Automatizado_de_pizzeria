@@ -19,6 +19,10 @@ import os
 mutex_crear = threading.Lock()
 #Semáforo para controlar la creación de la masa
 mutex_siguiente_ronda = threading.Lock()
+#Mutex implementados para asegurarnos del correcto procesamiento de cada pizza en las distintas cintas
+mutex1 = threading.Lock()
+mutex2 = threading.Lock()
+mutex3 = threading.Lock()
 #Semáforo para controlar el acceso a corte
 mutex_corte = threading.Condition()
 #Mutex para controlar la salida de la pizza del horno
@@ -36,9 +40,12 @@ mutex_usuario_pizza = threading.Lock()
 
 #Definición de las variables de control de los semáforos
 crear_masa_ctrl = True
+siguiente_ronda = True
+cinta1_activa = True
+cinta2_activa = True
+cinta3_activa = True
 Pizza_is_in_corte = True
 recogida_pizza = True
-siguiente_ronda = True
 espera_2 = True
 espera_3 = True
 espera_4 = True
@@ -155,6 +162,7 @@ pizzas_ref = RDK.Item("Pizzas", ITEM_TYPE_FRAME)
 # Función para verificar si el objeto está cerca de una posición específica
 def is_at_station(part_pose, target_position, axis, tolerance=20):
     x, y, z = part_pose.Pos()
+    
     if axis == 'X':
         return abs(x - target_position) <= tolerance
     elif axis == 'Y':
@@ -324,7 +332,7 @@ def Rotar_pizza (part_item):
         conveyor_move_object(part_item, 0.05550147, axis='RX')
     time.sleep(REFRESH_RATE)
 
-# Función para manejar los mensajes de los topics
+#Función para manejar los mensajes de los topics
 def on_message_tcp(client_tcp, userdata, msg):
     mensaje = msg.payload.decode()
     topic   = msg.topic
@@ -347,13 +355,13 @@ def on_message_tcp(client_tcp, userdata, msg):
             pass
         os._exit(0)
 
-# Función para manejar la suscripción a los topics
+#Función para manejar la suscripción a los topics
 def on_connect_ws(client, userdata, flags, rc):
     print("Conectado con código:", rc)
     client.subscribe(TOPIC_USUARIO)
     client.subscribe(TOPIC_PIZZA)
 
-# Función para manejar los mensajes de los topics WebSocket
+#Función para manejar los mensajes de los topics WebSocket
 def on_message_ws(client, userdata, msg):
     mensaje = msg.payload.decode()
     topic   = msg.topic
@@ -408,7 +416,7 @@ def actualizar_estado(usuario,estado, identificador_pedido):
             else:
                 # Usamos directamente el identificador pasado
                 id_pedido = identificador_pedido
-                #Verificar que existe y pertenece al cliente:
+                # Verificar que existe y pertenece al cliente:
                 cur.execute(
                     """
                     SELECT 1
@@ -446,13 +454,20 @@ def actualizar_estado(usuario,estado, identificador_pedido):
         if conn:
             conn.close()
 
-#Corre la masa por la cinta, activa la prensa y permite la creación de una nueva masa
+#Estación 1: Corre la masa por la cinta, activa la prensa y permite la creación de una nueva masa
 def run_station_1(part):
+    global cinta1_activa
     global crear_masa_ctrl
 
     while not is_at_station(part.Pose(), STATION_1_POSITION, axis='Y'):
-        conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
-        time.sleep(REFRESH_RATE)
+        with mutex1:
+            if cinta1_activa:
+                conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
+                time.sleep(REFRESH_RATE)
+
+
+    with mutex1:
+        cinta1_activa = False
     if execute_station_program(STATION_1_PREPROGRAM):
         part = replace_object(part, 'pizza_masa_prensada')
         if part is None:
@@ -463,18 +478,24 @@ def run_station_1(part):
         return None
     if not execute_station_program(STATION_1_POSTPROGRAM): return
 
-    with mutex_crear:
+    with mutex1 and mutex_crear:
         crear_masa_ctrl = True
+        cinta1_activa = True
     return part
 
-#Mueve la masa por la cinta hasta la estación 2, ejecuta el programa de salsa y la deja en la cinta de ingredientes
+#Estación 2: Mueve la masa por la cinta hasta la estación 2, ejecuta el programa de salsa y la deja en la cinta de ingredientes
 def run_station_2(part):
+    global cinta1_activa
 
     while not is_at_station(part.Pose(), STATION_2_POSITION, axis='Y'):
-        conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
-        time.sleep(REFRESH_RATE)
+        with mutex1:
+            if cinta1_activa:
+                conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
+                time.sleep(REFRESH_RATE)
 
 
+    with mutex1:
+        cinta1_activa = False
     if execute_station_program(STATION_2_PROGRAM):
         part = replace_object(part, 'pizza_tomate')
         if part is None:
@@ -483,97 +504,141 @@ def run_station_2(part):
     else:
         print("Error al ejecutar el programa de salsa.")
         return None
-
+    with mutex1:
+        cinta1_activa = True
+    
     while not is_at_station(part.Pose(), STATION_3_PREPICK_POSITION, axis='Y'):
-        conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
-        time.sleep(REFRESH_RATE)
+        with mutex1:
+            if cinta1_activa:
+                conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
+                time.sleep(REFRESH_RATE)
 
     #Mover la pizza en cinta circular
     while (not (is_at_station(part.Pose(), STATION_3_PICK_POSITION, axis='Y') and is_at_station(part.Pose(), STATION_3_PRE_QUESO_DROPPER, axis='X'))):
-        if not is_at_station(part.Pose(), STATION_3_PICK_POSITION, axis='Y'):
-            conveyor_move_object(part, -200 * REFRESH_RATE, axis='Y')
-        if not is_at_station(part.Pose(), STATION_3_PRE_QUESO_DROPPER, axis='X'):
-            conveyor_move_object(part, 200 * REFRESH_RATE, axis='X') 
-        time.sleep(REFRESH_RATE)
+        with mutex1:
+            if cinta1_activa:
+                if not is_at_station(part.Pose(), STATION_3_PICK_POSITION, axis='Y'):
+                    conveyor_move_object(part, -200 * REFRESH_RATE, axis='Y')
+                if not is_at_station(part.Pose(), STATION_3_PRE_QUESO_DROPPER, axis='X'):
+                    conveyor_move_object(part, 200 * REFRESH_RATE, axis='X') 
+                time.sleep(REFRESH_RATE)
 
     return part
 
-#Mueve la masa por los ingredientes eligiendo cual tiene que poner según el pedido del usuario, si no hay pedido se pone queso
+# Estación 3: Mueve la masa por los ingredientes eligiendo cual tiene que poner según el pedido del usuario, si no hay pedido se pone queso
 def run_station_3(part, pedido_usuario, identificador_pedido):
+    global cinta2_activa
     queso = RDK.Item("queso", ITEM_TYPE_OBJECT)
     bacon = RDK.Item("bacon", ITEM_TYPE_OBJECT)
     pepperoni = RDK.Item("pepperoni", ITEM_TYPE_OBJECT)
     champis = RDK.Item("champis", ITEM_TYPE_OBJECT)
 
     while not is_at_station(part.Pose(), STATION_3_QUESO_DROPPER, axis='X'):
-        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
-        time.sleep(REFRESH_RATE)
+        with mutex2:
+            if cinta2_activa:
+                conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
+                time.sleep(REFRESH_RATE)
 
+    with mutex2:
+        cinta2_activa = False
+
+    #Creamos el objeto de queso del dispensador
     queso_part = crear_masa_ini(queso, 'queso')
+
     #Cae el queso
     while not is_at_station(queso_part.Pose(), STATION_3_QUESO_POSITION, axis='Z'):
         conveyor_move_object(queso_part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Z')
         time.sleep(REFRESH_RATE)
+
+    #Cambiamos la pizza por su respectiva cruda
     part = replace_object(part, 'pizza_queso_cruda')
     RDK.Delete(queso_part)
+    with mutex2:
+        cinta2_activa = True
 
     #Si se ha pedido una pizza distinta a la de queso le pone otro ingrediente además de este
     if pedido_usuario != DEFAULT_PEDIDO:
+
         #Obtengo solo el tipo de pizza que se ha pedido
         _, pizza_usada = pedido_usuario.split(":", 1)
+
+        #Para cada uno de los ingredientes hacemos lo mismo que hemos hecho antes en el queso
         if pizza_usada == PIZZA_BACON:
-            #Parar pizza en el bacon
             while not is_at_station(part.Pose(), STATION_3_BACON_DROPPER, axis='X'):
-                conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
-                time.sleep(REFRESH_RATE)
+                with mutex2:
+                    if cinta2_activa:
+                        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
+                        time.sleep(REFRESH_RATE)
+            with mutex2:
+                cinta2_activa = False
+
             bacon_part = crear_masa_ini(bacon, 'bacon')
-            #Cae el bacon
+
             while not is_at_station(bacon_part.Pose(), STATION_3_QUESO_POSITION, axis='Z'):
                 conveyor_move_object(bacon_part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Z')
                 time.sleep(REFRESH_RATE)
+
             part = replace_object(part, 'pizza_bacon_cruda')
             RDK.Delete(bacon_part)
+            with mutex2:
+                cinta2_activa = True
+
         elif pizza_usada == PIZZA_PEPERONI:
-            #Parar pizza en el pepperoni
             while not is_at_station(part.Pose(), STATION_3_PEPPERONI_DROPPER, axis='X'):
-                conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
-                time.sleep(REFRESH_RATE)
+                with mutex2:
+                    if cinta2_activa:
+                        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
+                        time.sleep(REFRESH_RATE)
+            with mutex2:
+                cinta2_activa = False
+
             pepperoni_part = crear_masa_ini(pepperoni, 'pepperoni')
-            #Cae el pepperoni
+
             while not is_at_station(pepperoni_part.Pose(), STATION_3_QUESO_POSITION, axis='Z'):
                 conveyor_move_object(pepperoni_part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Z')
                 time.sleep(REFRESH_RATE)
+
             part = replace_object(part, 'pizza_pepperoni_cruda')
             RDK.Delete(pepperoni_part)
+            with mutex2:
+                cinta2_activa = True
 
         elif pizza_usada == PIZZA_CHAMPIS:
-            #Parar pizza en los champis
             while not is_at_station(part.Pose(), STATION_3_CHAMPIS_DROPPER, axis='X'):
-                conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
-                time.sleep(REFRESH_RATE)
+                with mutex2:
+                    if cinta2_activa:
+                        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
+                        time.sleep(REFRESH_RATE)
+            with mutex2:
+                cinta2_activa = False
+
             champis_part = crear_masa_ini(champis, 'champis')
-            #Caen los cahmpis
+
             while not is_at_station(champis_part.Pose(), STATION_3_QUESO_POSITION, axis='Z'):
                 conveyor_move_object(champis_part, MOVE_SPEED_MMS * REFRESH_RATE, axis='Z')
                 time.sleep(REFRESH_RATE)
+
             part = replace_object(part, 'pizza_champis_cruda')
             RDK.Delete(champis_part)
+            with mutex2:
+                cinta2_activa = True
 
     while not is_at_station(part.Pose(), STATION_3_PRE_LAST_POSITION, axis='X'):
-        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
-        time.sleep(REFRESH_RATE)
-
-    #Movimiento de la pizza en cinta circular
-    while not is_at_station(part.Pose(), STATION_3_PRE_LAST_POSITION, axis='X'):
-        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
-        time.sleep(REFRESH_RATE)
-    while (not (is_at_station(part.Pose(), STATION_3_LAST_POSITION_Y, axis='Y') and is_at_station(part.Pose(), STATION_3_LAST_POSITION, axis='X'))):
-        if not is_at_station(part.Pose(), STATION_3_LAST_POSITION_Y, axis='Y'):
-            conveyor_move_object(part, 200 * REFRESH_RATE, axis='Y')
-        if not is_at_station(part.Pose(), STATION_3_LAST_POSITION, axis='X'):
-            conveyor_move_object(part, 200 * REFRESH_RATE, axis='X') 
-        time.sleep(REFRESH_RATE)
+        with mutex2:
+            if cinta2_activa:
+                conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
+                time.sleep(REFRESH_RATE)
     
+    #Movimiento de la pizza en cinta circular
+    while (not (is_at_station(part.Pose(), STATION_3_LAST_POSITION_Y, axis='Y') and is_at_station(part.Pose(), STATION_3_LAST_POSITION, axis='X'))):
+        with mutex1:
+            if cinta1_activa:
+                if not is_at_station(part.Pose(), STATION_3_LAST_POSITION_Y, axis='Y'):
+                    conveyor_move_object(part, 200 * REFRESH_RATE, axis='Y')
+                if not is_at_station(part.Pose(), STATION_3_LAST_POSITION, axis='X'):
+                    conveyor_move_object(part, 200 * REFRESH_RATE, axis='X') 
+                time.sleep(REFRESH_RATE)
+
     #Si es una pizza pedida por usuario actualiza el estado
     if pedido_usuario != DEFAULT_PEDIDO:
         client_tcp.publish(TOPIC_LEDS, "HORNO")
@@ -581,8 +646,9 @@ def run_station_3(part, pedido_usuario, identificador_pedido):
         actualizar_estado(usuario, "HORNO", identificador_pedido)
     return part
 
-#Mueve la pizza al horno, la cocina y la deja en la cinta para que el usuario la recoja
+# Estación 4: Mueve la pizza al horno, la cocina y la deja en la cinta para que el usuario la recoja
 def run_station_4(part):
+    global cinta3_activa
     global siguiente_ronda
     caja_con_tapa =RDK.Item('caja_con_tapa', ITEM_TYPE_OBJECT)
 
@@ -595,7 +661,7 @@ def run_station_4(part):
     }
 
     #Cambiamos el tipo de pizza a cocinada
-    raw_name = part.Name().split('_inst_')[0] 
+    raw_name = part.Name().split('_inst_')[0]
     cooked_name = COOKED_OBJECT_MAP.get(raw_name)
 
     if not cooked_name:
@@ -603,15 +669,24 @@ def run_station_4(part):
         return
 
     while not is_at_station(part.Pose(), STATION_4_REPLACE_POSITION, axis='Y'):
-        conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
-        time.sleep(REFRESH_RATE)
+        with mutex3:
+            if cinta3_activa:
+                conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
+                time.sleep(REFRESH_RATE)
     time.sleep(REFRESH_RATE)
 
     #Para darle tiempo al corte
     time.sleep(3)
 
+    #Reemplazamos la pizza cruda por su cocinada
+    with mutex3:
+        cinta3_activa = False
+        time.sleep(REFRESH_RATE)
     part = replace_object(part, cooked_name)
     time.sleep(REFRESH_RATE)
+    with mutex3:
+        cinta3_activa = True
+        time.sleep(REFRESH_RATE)
 
     #Permitimos la creación de más pizzas
     with mutex_siguiente_ronda:
@@ -631,13 +706,17 @@ def run_station_4(part):
         #Esperamos a que llegue otra pizza
         cond_pizza.wait()
 
+    #Este hilo se encarga de mover las cajas a su sitio en estacion 5
+    hilo_crear_caja = threading.Thread(target=crear_caja_ini, daemon=True, args=(caja_con_tapa, "caja_con_tapa"))
+    hilo_crear_caja.start()
+
     while not is_at_station(part.Pose(), STATION_4_POST_HORNO_POSITION, axis='Y'):
         conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
         time.sleep(REFRESH_RATE)
 
     while not is_at_station(part.Pose(), STATION_4_PICK_POSITION, axis='Y'):
-        with mutex_recogida_pizza:
-            if recogida_pizza:
+        with mutex3 and mutex_recogida_pizza:
+            if cinta3_activa and recogida_pizza:
                 conveyor_move_object(part, -MOVE_SPEED_MMS * REFRESH_RATE, axis='Y')
                 time.sleep(REFRESH_RATE)
     
@@ -645,15 +724,9 @@ def run_station_4(part):
     with mutex_corte:
         while not Pizza_is_in_corte:
             mutex_corte.wait()
-
-    #Este hilo se encarga de mover las cajas a su sitio en estacion 5
-    time.sleep(REFRESH_RATE + 0.1)
-    hilo_crear_caja = threading.Thread(target=crear_caja_ini, daemon=True, args=(caja_con_tapa, "caja_con_tapa"))
-    hilo_crear_caja.start()
-
     return part
 
-#Coge la pizza, le hace el corte y cierra la caja
+# Estación 5: Coge la pizza, le hace el corte y cierra la caja
 def run_station_5(part):
     global Pizza_is_in_corte
     global recogida_pizza
@@ -846,7 +919,7 @@ def run_station_5(part):
         return None
     return combinado_caja
     
-#Mueve la pizza por la cinta final para su recogida, si no ha sido pedida, la borra al tiempo
+#Estación 6: Mueve la pizza por la cinta final para su recogida, si no ha sido pedida, la borra al tiempo
 def run_station_6(part, pedido_usuario, identificador_pedido):
     global espera_2
     global espera_3
@@ -871,11 +944,13 @@ def run_station_6(part, pedido_usuario, identificador_pedido):
     
     #Mueve la pizza en cinta circular
     while (not (is_at_station(part.Pose(), STATION_6_PRE_PERSON_LAST_Y, axis='Y') and is_at_station(part.Pose(), STATION_6_PRE_PERSON_X, axis='X'))):
-        if not is_at_station(part.Pose(), STATION_6_PRE_PERSON_LAST_Y, axis='Y'):
-            conveyor_move_object(part, 200 * REFRESH_RATE, axis='Y')
-        if not is_at_station(part.Pose(), STATION_6_PRE_PERSON_X, axis='X'):
-            conveyor_move_object(part, -200 * REFRESH_RATE, axis='X') 
-        time.sleep(REFRESH_RATE)
+        with mutex1:
+            if cinta1_activa:
+                if not is_at_station(part.Pose(), STATION_6_PRE_PERSON_LAST_Y, axis='Y'):
+                    conveyor_move_object(part, 200 * REFRESH_RATE, axis='Y')
+                if not is_at_station(part.Pose(), STATION_6_PRE_PERSON_X, axis='X'):
+                    conveyor_move_object(part, -200 * REFRESH_RATE, axis='X') 
+                time.sleep(REFRESH_RATE)
 
     while not is_at_station(part.Pose(), STATION_6_FIRST_POSITION, axis='X'):
         conveyor_move_object(part, MOVE_SPEED_MMS * REFRESH_RATE, axis='X')
@@ -974,7 +1049,7 @@ def run_station_6(part, pedido_usuario, identificador_pedido):
             espera_4 = True
     # Espera al QR o espera 50 segundos y si se da cualquiera de estar, borra la pizza y le dice a la anterior que puede seguir
     else:
-        recibido = event.wait(timeout=50)
+        recibido = event.wait(timeout=20)
         if not recibido:
             event.set()
         RDK.Delete(part)
@@ -982,7 +1057,7 @@ def run_station_6(part, pedido_usuario, identificador_pedido):
         with mutex_espera_4:
             espera_4 = True
 
-#Gestión de las llamadas a las estaciones y el flujo del programa
+#Flujo principal: Gestión de las llamadas a las estaciones y el flujo del programa
 def main(pedido_usuario, usuario, pizza_usada):
     global crear_masa_ctrl
 
@@ -1021,6 +1096,7 @@ client.on_connect = on_connect_ws
 client.on_message = on_message_ws
 client.tls_set(cert_reqs=ssl.CERT_NONE)
 client.tls_insecure_set(True)
+
 client.connect(BROKER_WS, PORT_WS, keepalive=60)
 client.loop_start() 
 
